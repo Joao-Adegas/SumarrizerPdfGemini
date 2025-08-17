@@ -1,9 +1,11 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
-import fitz
+import fitz  # PyMuPDF
 import google.generativeai as genai
 from dotenv import load_dotenv
 import os
+from docx import Document  # Para arquivos .docx
+from io import BytesIO
 
 load_dotenv()
 gemini_api_key = os.getenv("gemini_api_key")
@@ -18,12 +20,33 @@ def extrair_texto_pdf(file_bytes):
         texto += pagina.get_text()
     return texto
 
-@app.post("/")
-async def analisar_pdf(prompt: str = Form(...), file: UploadFile = File(...)):
-    conteudo_pdf = await file.read()
-    texto = extrair_texto_pdf(conteudo_pdf)
+def extrair_texto_md(file_bytes):
+    return file_bytes.decode("utf-8")
 
-    prompt_completo = f"{prompt}\n\nConteúdo do PDF:\n{texto}"
+def extrair_texto_docx(file_bytes):
+    doc_stream = BytesIO(file_bytes)
+    doc = Document(doc_stream)
+    texto = "\n".join([par.text for par in doc.paragraphs])
+    return texto
+
+@app.post("/")
+async def analisar_arquivo(prompt: str = Form(...), file: UploadFile = File(...)):
+    conteudo_arquivo = await file.read()
+
+    # Detecta o tipo de arquivo
+    if file.filename.endswith(".pdf"):
+        texto = extrair_texto_pdf(conteudo_arquivo)
+    elif file.filename.endswith(".md"):
+        texto = extrair_texto_md(conteudo_arquivo)
+    elif file.filename.endswith(".docx"):
+        texto = extrair_texto_docx(conteudo_arquivo)
+    else:
+        return JSONResponse(
+            status_code=400,
+            content={"erro": "Tipo de arquivo não suportado. Envie um PDF, Markdown (.md) ou Word (.docx)."}
+        )
+
+    prompt_completo = f"{prompt}\n\nConteúdo do arquivo:\n{texto}"
     modelo = genai.GenerativeModel("models/gemini-2.5-pro")
     resposta = modelo.generate_content(prompt_completo)
 
