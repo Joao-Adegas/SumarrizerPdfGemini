@@ -1,16 +1,17 @@
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
-import fitz  # PyMuPDF
-import google.generativeai as genai
 from dotenv import load_dotenv
-import os
 from docx import Document  # Para arquivos .docx
 from io import BytesIO
+
+import os
+import re
+import fitz  # PyMuPDF
+import google.generativeai as genai
 
 load_dotenv()
 gemini_api_key = os.getenv("gemini_api_key")
 genai.configure(api_key=gemini_api_key)
-
 app = FastAPI()
 
 def extrair_texto_pdf(file_bytes):
@@ -49,5 +50,15 @@ async def analisar_arquivo(prompt: str = Form(...), file: UploadFile = File(...)
     prompt_completo = f"{prompt}\n\nConteúdo do arquivo:\n{texto}"
     modelo = genai.GenerativeModel("models/gemini-2.5-pro")
     resposta = modelo.generate_content(prompt_completo)
+    texto_resposta = resposta.text
+    padrao_perguntas = re.findall(r"\d+\.\s+(.*)",texto_resposta)
 
-    return JSONResponse(content={"resposta": resposta.text})
+    if(not padrao_perguntas):
+        padrao_perguntas = re.findall(r"\d+\.\s+(.*)",texto_resposta)
+
+    perguntas = {f"pergunta_{i+1}": pergunta for i, pergunta in enumerate(padrao_perguntas)}
+
+    return JSONResponse(content={
+        "resposta_completa": texto_resposta,
+        "perguntas_separadas":perguntas
+        })
