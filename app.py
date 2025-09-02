@@ -3,16 +3,21 @@ from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from docx import Document  # Para arquivos .docx
 from io import BytesIO
-
+import requests
+from fastapi.responses import StreamingResponse
+from io import StringIO
 import os
 import re
 import fitz  # PyMuPDF
 import google.generativeai as genai
 
 load_dotenv()
-gemini_api_key = os.getenv("gemini_api_key")
+gemini_api_key = os.getenv("gemini_api_key")    
 genai.configure(api_key=gemini_api_key)
 app = FastAPI()
+
+os.environ["HTTP_PROXY"] = "http://127.0.0.1:8080"
+os.environ["HTTPS_PROXY"] = "http://127.0.0.1:8080"
 
 def extrair_texto_pdf(file_bytes):
     doc = fitz.open(stream=file_bytes, filetype="pdf")
@@ -48,7 +53,7 @@ async def analisar_arquivo(prompt: str = Form(...), file: UploadFile = File(...)
         )
 
     prompt_completo = f"{prompt}\n\nConteúdo do arquivo:\n{texto}"
-    modelo = genai.GenerativeModel("models/gemini-2.5-pro")
+    modelo = genai.GenerativeModel("models/gemini-2.5-flash")
     resposta = modelo.generate_content(prompt_completo)
     texto_resposta = resposta.text
     padrao_perguntas = re.findall(r"\d+\.\s+(.*)",texto_resposta)
@@ -62,3 +67,48 @@ async def analisar_arquivo(prompt: str = Form(...), file: UploadFile = File(...)
         "resposta_completa": texto_resposta,
         "perguntas_separadas":perguntas
         })
+
+
+
+@app.post("/gerar_md")
+async def gerar_md(prompt: str = Form(...), file: UploadFile = File(...)):
+    conteudo_arquivo = await file.read()
+
+    if file.filename.endswith(".pdf"):
+        texto = extrair_texto_pdf(conteudo_arquivo)
+    elif file.filename.endswith(".md"):
+        texto = extrair_texto_md(conteudo_arquivo)
+    elif file.filename.endswith(".docx"):
+        texto = extrair_texto_docx(conteudo_arquivo)
+    else:
+        return JSONResponse(
+            status_code=400,
+            content={"erro": "Tipo de arquivo não suportado. Envie um PDF, Markdown (.md) ou Word (.docx)."}
+        )
+
+    prompt_completo = f"{prompt}\n\nConteúdo do arquivo:\n{texto}"
+    modelo = genai.GenerativeModel("models/gemini-2.5-flash")
+    resposta = modelo.generate_content(prompt_completo)
+    texto_resposta = resposta.text
+    padrao_perguntas = re.findall(r"\d+\.\s+(.*)", texto_resposta)
+
+    if not padrao_perguntas:
+        padrao_perguntas = re.findall(r"\d+\.\s+(.*)", texto_resposta)
+
+
+    md_content = ""
+    for i, pergunta in enumerate(padrao_perguntas, start=1):
+        md_content += f"{i}. {pergunta}\n\n"
+
+
+    md_file = StringIO(md_content)
+    md_file.seek(0)
+
+
+    return StreamingResponse(
+        md_file,
+        media_type="text/markdown",
+        headers={
+            "Content-Disposition": f"attachment; filename=perguntas_geradas.md"
+        }
+    )
